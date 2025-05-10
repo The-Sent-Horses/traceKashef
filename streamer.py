@@ -5,40 +5,41 @@ import pyarrow as pa
 
 
 
+
 schema = pa.schema([
-    ("timestamp", pa.uint32()),
+    ("timestamp", pa.string()),
     ("event_type", pa.string()), 
-    ("pointer", pa.uint32()),
-    ("value", pa.uint32()), 
+    ("pointer", pa.string()),
+    ("value", pa.string()), 
     ("name", pa.string()),
 
     
     
-    ("handle_1", pa.uint32()),
-    ("handle_2", pa.uint32()),
+    ("handle_1", pa.string()),
+    ("handle_2", pa.string()),
     
     ("arg1", pa.string()),
     ("arg2", pa.string()),
     ("arg3", pa.string()),
     ("arg4", pa.string()),
-    ("func_hash", pa.uint64()), 
+    ("func_hash", pa.string()), 
+    ("mem_usage", pa.string()),
 ])
 
 def extend_batch_array(base_batch_array, pointer=0, value=0, name="", handle_1=0, handle_2=0, args=None, func_hash=0):
     
     if args is None:
         args = [""] * 4
-    
     base_batch_array[2] = pa.array([pointer])  # Pointer
-    base_batch_array[3] = pa.array([value])  # Value
+    base_batch_array[3] = pa.array([str(value)])  # Value
     base_batch_array[4] = pa.array([name])  # Name
-    base_batch_array[5] = pa.array([handle_1])  # Handle 1
-    base_batch_array[6] = pa.array([handle_2])  # Handle 2
+    base_batch_array[5] = pa.array([str(handle_1)])  # Handle 1
+    base_batch_array[6] = pa.array([str(handle_2)])  # Handle 2
     base_batch_array[7] = pa.array([args[0]])  # Arg1
     base_batch_array[8] = pa.array([args[1]])  # Arg2
     base_batch_array[9] = pa.array([args[2]])  # Arg3
     base_batch_array[10] = pa.array([args[3]])  # Arg4
-    base_batch_array[11] = pa.array([func_hash])  # Function hash
+    base_batch_array[11] = pa.array([str(func_hash)])  # Function hash
     
     return base_batch_array
 
@@ -351,6 +352,7 @@ class Streamer:
         self.clients = set()
         self.sink = None
         self.writer = None
+        self.mem_usage = 0
     
     def get_event(self):
 
@@ -359,7 +361,7 @@ class Streamer:
             psf_event = event[1]
         except StopIteration:
             print("End of iterator reached.")
-            return None, None
+            return -1, -1
         
         try:
         
@@ -376,11 +378,13 @@ class Streamer:
     def create_batch_array(self):
         event, event_type = self.get_event()
         if event is None:
-            return None
+            return 0
+        if event == -1:
+            return -1
         base_batch_array = [
-            pa.array([event[0]]),  # Timestamp
+            pa.array([str(event[0])]),  # Timestamp
             pa.array([PSF_EVENT(event_type).name]),  # Event type
-            pa.array([0]),  # Pointer
+            pa.array([""]),  # Pointer
             pa.array([0]),  # Value
             pa.array([""]),  # Name
             pa.array([0]),  # Handle 1
@@ -389,27 +393,30 @@ class Streamer:
             pa.array([""]),  # Arg2
             pa.array([""]),  # Arg3
             pa.array([""]),  # Arg4
-            pa.array([0]),  # Function hash
+            pa.array([""]),  # Function hash
+            pa.array([""]),  # Memory usage
         ]
         handler = DISPATCH_MAP.get(event_type)
         if handler:
             base_batch_array = handler(event, base_batch_array)
+            
+            if event_type in [PSF_EVENT.TASK_CREATE, PSF_EVENT.TIMER_CREATE, PSF_EVENT.OBJ_NAME, PSF_EVENT.STATEMACHINE_STATE_CREATE, PSF_EVENT.STATEMACHINE_CREATE, PSF_EVENT.INTERVAL_CHANNEL_CREATE, PSF_EVENT.EXTENSION_CREATE, PSF_EVENT.HEAP_CREATE, PSF_EVENT.COUNTER_CREATE, PSF_EVENT.INTERVAL_CHANNEL_SET_CREATE]:
+                self.mem_usage += 1
+            elif event_type in [PSF_EVENT.TASK_DELETE, PSF_EVENT.TIMER_DELETE, PSF_EVENT.STATEMACHINE_CREATE, PSF_EVENT.STATEMACHINE_STATE_CREATE, PSF_EVENT.INTERVAL_CHANNEL_CREATE, PSF_EVENT.EXTENSION_CREATE, PSF_EVENT.HEAP_CREATE, PSF_EVENT.COUNTER_CREATE]:
+                self.mem_usage -= 1
+            elif event_type == PSF_EVENT.MALLOC:
+                self.mem_usage += event[3]
+            elif event_type == PSF_EVENT.FREE:
+                self.mem_usage -= event[3]
+            base_batch_array[12] = pa.array([f"{self.mem_usage}"])
+            
         else:
             raise ValueError(f"Unsupported event_type: {event_type}")
         return pa.Table.from_arrays(base_batch_array, schema=schema)
-    
-    
-    async def send_data(self):
-        while True:
-            self.create_sink_writer()
-            batch = self.create_batch_array()
+        
+        
             
-            if batch is None:
-                self.writer.close()
-                continue
             
-            if self.perspective_table:
-                self.perspective_table.update(batch.to_pydict())
                 
     
     

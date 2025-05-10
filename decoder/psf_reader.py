@@ -78,7 +78,8 @@ class psf_reader:
             
         byte = self.f.read(struct_size)
 
-
+        if len(byte) < struct_size:
+            return None  # End of file or incomplete read
         eventID, eventCount, TS = struct.unpack(TRACE_EVENTN_FMT_BASE, byte) # "<H H I" 
         
         param_count = (eventID >> 12) & 0xF  # Assuming event ID encodes N (upper 4 bits)

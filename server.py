@@ -11,29 +11,37 @@ import perspective.handlers.tornado
 from streamer import Streamer
 from decoder import psf_reader
 
+import pyarrow as pa
+import pyarrow.ipc as ipc
 
 
 schema_dict = {
-    "timestamp": "integer",
+    "timestamp": "string",
     "event_type": "string",
-    "pointer": "integer",
-    "value": "integer",
+    "pointer": "string",
+    "value": "string",
     "name": "string",
-    "handle_1": "integer",
-    "handle_2": "integer",
+    "handle_1": "string",
+    "handle_2": "string",
     "arg1": "string",
     "arg2": "string",
     "arg3": "string",
     "arg4": "string",
-    "func_hash": "integer",
+    "func_hash": "string",
+    "mem_usage": "string",
 }
 
+
+
+
+
+def perspective_thread(perspective_server,
+                       psf_path= "/mnt/c/Program Files/Percepio/Tracealyzer 4/FreeRTOS/demo_freertos.psf",
+                       arrow_out="snapshot.arrow",
+                       ):
     
-    
-def perspective_thread(perspective_server):
     client = perspective_server.new_local_client()
     
-    psf_path = "/mnt/c/Program Files/Percepio/Tracealyzer 4/FreeRTOS/demo_freertos.psf"
     trace = psf_reader.psf_reader(psf_path)
     trace.get_header()
     trace.skip_white_space()
@@ -41,14 +49,30 @@ def perspective_thread(perspective_server):
     streamer = Streamer(traceKashef=trace, perspective_table=table)
     
     # update with new data every 50ms
-    def updater():
-        data = streamer.create_batch_array()
-        if data:
-            table.update(data)
+    def convert_psf_to_arrow():
+        tables = []
+        while True:
+            batch = streamer.create_batch_array()
+            if batch == 0:
+                continue
+            if batch == -1:
+                break
+            tables.append(batch)
+            print(".", end = "")
+        if tables:
+            combined = pa.concat_tables(tables)
+            with pa.OSFile(arrow_out, "wb") as sink:
+                writer = ipc.new_file(sink, combined.schema)
+                writer.write_table(combined)
+                writer.close()  
        
 
-    callback = tornado.ioloop.PeriodicCallback(callback=updater, callback_time=0.01)
-    callback.start()
+    convert_psf_to_arrow()
+    
+    with pa.memory_map(arrow_out, "r") as source:
+        table = ipc.open_file(source).read_all()
+    
+    perspective_table = client.table(table, name="freertos_table")
     
 
 def make_app(perspective_server):

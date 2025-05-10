@@ -66,11 +66,12 @@ def interpret_new_time_event(event):
     timestamp = event[3]
     tick_count = event[4]
 
-    return [
-        timestamp,
-        PSF_EVENT(event[1]).name,
-        tick_count
-    ]
+    # return [
+    #     timestamp,
+    #     PSF_EVENT(event[1]).name,
+    #     tick_count
+    # ]
+    return None # tempurary to avoid spam
 
 
 def interpret_new_time_scheduler_suspended_event(event):
